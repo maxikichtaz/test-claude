@@ -11,7 +11,7 @@
 //|  - Optional breakeven stop once the trade reaches +X R           |
 //+------------------------------------------------------------------+
 #property copyright "test-claude"
-#property version   "1.06"
+#property version   "1.07"
 
 #include <Trade\Trade.mqh>
 
@@ -194,6 +194,9 @@ int OnInit()
 {
    g_trade.SetExpertMagicNumber((ulong)MagicNumber);
    g_trade.SetDeviationInPoints((ulong)Slippage);
+   PrintFormat("WednesdayPDHPDL v1.07 | Risk %.2f%% | SL min %.2f / max %.2f | BreakEvenAtR %.2f (offset %d pts) | Friday close %s %02d:%02d",
+               RiskPercent, MinSLFraction, MaxSLFraction, BreakEvenAtR, BreakEvenOffsetPoints,
+               CloseBeforeWeekend ? "on" : "off", FridayCloseHour, FridayCloseMinute);
    return(INIT_SUCCEEDED);
 }
 
@@ -284,7 +287,10 @@ void ManageBreakEven()
       if((isBuy && price - newSl < minDist) || (!isBuy && newSl - price < minDist))
          continue;
 
-      if(!g_trade.PositionModify(ticket, newSl, tp))
+      if(g_trade.PositionModify(ticket, newSl, tp))
+         PrintFormat("Breakeven: position %I64u SL moved from %.2f to %.2f (gain %.2f >= %.1f R)",
+                     ticket, sl, newSl, gain, BreakEvenAtR);
+      else
          Print("Breakeven error: ", g_trade.ResultRetcode(), " ", g_trade.ResultRetcodeDescription());
    }
 }
