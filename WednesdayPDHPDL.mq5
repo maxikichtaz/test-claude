@@ -7,9 +7,10 @@
 //|  - SL = sweep extreme, risk = % of balance                       |
 //|  - Max 1 trade per day, entries only in the NY killzone          |
 //|  - Min SL distance filter (fraction of previous day range)       |
+//|  - Flat before the weekend (Friday cutoff, server time)          |
 //+------------------------------------------------------------------+
 #property copyright "test-claude"
-#property version   "1.03"
+#property version   "1.04"
 
 #include <Trade\Trade.mqh>
 
@@ -26,6 +27,11 @@ input bool            TradeTuesday   = false;
 input bool            TradeWednesday = true;
 input bool            TradeThursday  = false;
 input bool            TradeFriday    = false;
+
+//--- no position over the weekend (avoid weekend swap / gap)
+input bool            CloseBeforeWeekend = true; // Close open trades on Friday
+input int             FridayCloseHour    = 17;   // Friday close hour (server time)
+input int             FridayCloseMinute  = 0;    // Friday close minute (server time)
 
 //--- ICT killzones (broker SERVER time, hours). Default = broker GMT+2/+3 (NY + 7h)
 input bool            UseKillzones = true;       // Only enter inside killzones
@@ -189,8 +195,52 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
+//| Close this EA's positions that must not stay over the weekend    |
+//+------------------------------------------------------------------+
+bool WeekendCloseCheck()
+{
+   if(!CloseBeforeWeekend)
+      return(false);
+
+   MqlDateTime now;
+   TimeToStruct(TimeCurrent(), now);
+   int  nowMin     = now.hour * 60 + now.min;
+   int  cutoffMin  = FridayCloseHour * 60 + FridayCloseMinute;
+   bool afterCutoff = (now.day_of_week == 5 && nowMin >= cutoffMin) ||
+                      now.day_of_week == 6 || now.day_of_week == 0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol ||
+         PositionGetInteger(POSITION_MAGIC) != MagicNumber)
+         continue;
+
+      // Also catch positions that crossed a weekend (e.g. market closed on Friday)
+      MqlDateTime op;
+      datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+      TimeToStruct(openTime, op);
+      bool crossedWeekend = (now.day_of_week < op.day_of_week) ||
+                            (TimeCurrent() - openTime >= 7 * 86400);
+
+      if(afterCutoff || crossedWeekend)
+      {
+         if(!g_trade.PositionClose(ticket))
+            Print("Weekend close error: ", g_trade.ResultRetcode(), " ", g_trade.ResultRetcodeDescription());
+      }
+   }
+   return(afterCutoff);
+}
+
+//+------------------------------------------------------------------+
 void OnTick()
 {
+   // 0. No position over the weekend, and no new entry after the Friday cutoff
+   if(WeekendCloseCheck())
+      return;
+
    // 1. Work only once per new signal candle
    datetime barTime = iTime(_Symbol, SignalTF, 0);
    if(barTime == 0 || barTime == g_lastBarTime)

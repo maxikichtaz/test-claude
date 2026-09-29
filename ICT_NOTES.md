@@ -47,3 +47,14 @@
   - Wednesday: 38 trades, PF 1.77, +18.5R, maxDD 4.9% (2025 flat, 2026 +17R)
   - Tue-Thu:  104 trades, PF 1.60, +40.1R, +22R without top 3, maxDD 12.2%, both years positive
   - Mon-Fri:  164 trades, PF 1.42, +43.6R, maxDD 19.8%, 22-loss streak in 2026
+
+## MT5 results reported by the user
+- v1.03 Wednesday, Jan-Sep 2026 (99% quality): 15 trades, 40% win, PF 2.38, +13.4%, DD 4.9%
+  -> matches the Python model (16 trades, PF 2.92, DD 4.9%).
+- v1.03 Wednesday, long history (~5 years, 45% history quality): 123 trades, 29% win, PF 1.16,
+  +14.8%, DD 20.3%, 11-loss streak. Trades closed on Wednesday lose; closed on Thursday win.
+  -> edge much weaker over the long history.
+
+## v1.04: flat before the weekend (Friday 17:00 server, configurable)
+- Python (May 2025 - Sep 2026): no effect on Wednesday only; Tue-Thu +40.1R -> +31.6R (Thursday
+  trades cut short).

@@ -40,7 +40,8 @@ def in_kz(t,zones):
 
 bar_idx={b[0]:i for i,b in enumerate(bars)}
 
-def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_frac=0.0, weekdays=(2,)):
+def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_frac=0.0, weekdays=(2,), fri_close=None):
+    # fri_close: server hour on Friday at which open trades are closed (None = hold over weekend)
     # fresh_n: reclaim must come within N M15 bars of the last bar beyond the level (0 = same bar)
     # min_sl_frac: minimum SL distance as a fraction of the previous day range
     trades=[]; state={}; open_until=None
@@ -84,6 +85,9 @@ def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_f
                 hit_sl=bl<=sl; hit_tp=bh>=tp
             else:
                 hit_sl=bh+sp>=sl; hit_tp=bl+sp<=tp
+            if fri_close is not None and bt.weekday()==4 and bt.hour>=fri_close or bt.weekday()>4:
+                px=bo if side=='B' else bo+sp
+                res=(px-entry)/risk if side=='B' else (entry-px)/risk; exit_t=bt; break
             if hit_sl: res=-1.0; exit_t=bt; break      # conservative: SL first if both
             if hit_tp: res=rr; exit_t=bt; break
         if res is None: break
