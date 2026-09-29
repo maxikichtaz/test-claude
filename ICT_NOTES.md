@@ -40,3 +40,10 @@
 - Judas swing + FVG entry toward the gap CE: all variants negative (best: with MSS filter,
   74 trades, PF 0.81, -6R). Stop at FVG edge: very negative. 09:30 market entry toward CE: negative.
 - Caveat: CFD trades overnight so the "gap" is synthetic; ICT uses NQ/ES futures RTH on M1.
+
+## WednesdayPDHPDL v1.03 (reclaim + NY killzone 07:00-10:00 NY) - filters tested
+- "Fresh reclaim" filter (entry only right after the sweep): WORSE (+27.6R vs +35R), not added.
+- Min SL distance = 0.15 x previous day range: removes unrealistic tiny stops, less outlier-driven.
+  - Wednesday: 38 trades, PF 1.77, +18.5R, maxDD 4.9% (2025 flat, 2026 +17R)
+  - Tue-Thu:  104 trades, PF 1.60, +40.1R, +22R without top 3, maxDD 12.2%, both years positive
+  - Mon-Fri:  164 trades, PF 1.42, +43.6R, maxDD 19.8%, 22-loss streak in 2026

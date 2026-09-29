@@ -5,10 +5,11 @@
 //|  - Sweep of PDL then M15 close back above PDL -> BUY,  TP = PDH  |
 //|  - The level taken first during the day sets the direction       |
 //|  - SL = sweep extreme, risk = % of balance                       |
-//|  - Max 1 trade per Wednesday                                     |
+//|  - Max 1 trade per day, entries only in the NY killzone          |
+//|  - Min SL distance filter (fraction of previous day range)       |
 //+------------------------------------------------------------------+
 #property copyright "test-claude"
-#property version   "1.02"
+#property version   "1.03"
 
 #include <Trade\Trade.mqh>
 
@@ -17,6 +18,14 @@ input double          RiskPercent = 1.0;         // Risk per trade (% of balance
 input ENUM_TIMEFRAMES SignalTF    = PERIOD_M15;  // Signal candle timeframe
 input long            MagicNumber = 20260926;    // Magic number
 input int             Slippage    = 20;          // Max slippage (points)
+input double          MinSLFraction = 0.15;      // Min SL distance, fraction of previous day range (0 = off)
+
+//--- trading days (backtest NAS100: Tue-Thu more robust than Wednesday only)
+input bool            TradeMonday    = false;
+input bool            TradeTuesday   = false;
+input bool            TradeWednesday = true;
+input bool            TradeThursday  = false;
+input bool            TradeFriday    = false;
 
 //--- ICT killzones (broker SERVER time, hours). Default = broker GMT+2/+3 (NY + 7h)
 input bool            UseKillzones = true;       // Only enter inside killzones
@@ -73,6 +82,22 @@ double CalcLots(double slDistance)
 }
 
 //+------------------------------------------------------------------+
+//| Is this weekday enabled?                                         |
+//+------------------------------------------------------------------+
+bool IsTradingDay(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return(TradeMonday);
+      case 2: return(TradeTuesday);
+      case 3: return(TradeWednesday);
+      case 4: return(TradeThursday);
+      case 5: return(TradeFriday);
+   }
+   return(false);
+}
+
+//+------------------------------------------------------------------+
 //| Is the signal candle (open time) inside an enabled killzone?     |
 //+------------------------------------------------------------------+
 bool InKillzone(datetime t)
@@ -122,6 +147,10 @@ void OpenTrade(bool isBuy, double entry, double sl, double tp)
       return;
    }
 
+   // Too tight stops are not realistic: require a minimum SL distance
+   if(MathAbs(entry - sl) < MinSLFraction * (g_pdh - g_pdl))
+      return;
+
    // Broker minimum stop distance
    double minDist = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
    if(MathAbs(entry - sl) < minDist || MathAbs(tp - entry) < minDist)
@@ -168,10 +197,10 @@ void OnTick()
       return;
    g_lastBarTime = barTime;
 
-   // 2. Wednesday only (broker server time)
+   // 2. Enabled trading days only (broker server time)
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
-   if(dt.day_of_week != 3)
+   if(!IsTradingDay(dt.day_of_week))
    {
       g_currentDay = 0;
       return;

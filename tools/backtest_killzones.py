@@ -40,22 +40,25 @@ def in_kz(t,zones):
 
 bar_idx={b[0]:i for i,b in enumerate(bars)}
 
-def run(zones, start=None, end=None, sweep_only_kz=False):
+def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_frac=0.0, weekdays=(2,)):
+    # fresh_n: reclaim must come within N M15 bars of the last bar beyond the level (0 = same bar)
+    # min_sl_frac: minimum SL distance as a fraction of the previous day range
     trades=[]; state={}; open_until=None
     for t in m15_times:
         close_time=t+D.timedelta(minutes=15)   # signal evaluated at candle close
         d=t.date()
         if start and d<start or end and d>end: continue
-        if t.weekday()!=2 or d not in prev: continue
+        if t.weekday() not in weekdays or d not in prev: continue
         if state.get('day')!=d:
             pdh,pdl=prev[d]
-            state=dict(day=d,pdh=pdh,pdl=pdl,sh=pdh,sl=pdl,first=None,done=False)
+            state=dict(day=d,pdh=pdh,pdl=pdl,sh=pdh,sl=pdl,first=None,done=False,nH=999,nL=999)
         o,h,l,c=m15[t]
         s=state
+        s['nH']+=1; s['nL']+=1
         if h>s['pdh']:
-            s['sh']=max(s['sh'],h); s['first']=s['first'] or 'H'
+            s['sh']=max(s['sh'],h); s['first']=s['first'] or 'H'; s['nH']=0
         if l<s['pdl']:
-            s['sl']=min(s['sl'],l); s['first']=s['first'] or 'L'
+            s['sl']=min(s['sl'],l); s['first']=s['first'] or 'L'; s['nL']=0
         if s['done'] or (open_until and close_time<open_until): continue
         if close_time.date()!=d: continue
         if not in_kz(t,zones): continue
@@ -63,13 +66,16 @@ def run(zones, start=None, end=None, sweep_only_kz=False):
         if s['first']=='H' and c<s['pdh']: side='S'; sl=s['sh']; tp=s['pdl']
         elif s['first']=='L' and c>s['pdl']: side='B'; sl=s['sl']; tp=s['pdh']
         if not side: continue
+        if fresh_n is not None and (s['nH'] if side=='S' else s['nL'])>fresh_n: continue
         i=bar_idx.get(close_time)
         if i is None: continue
         spr=bars[i][5]
         entry=bars[i][1]+(spr if side=='B' else 0)   # buy at ask, sell at bid
         if side=='B' and (sl>=entry or tp<=entry): s['done']=True; continue
         if side=='S' and (sl<=entry or tp>=entry): s['done']=True; continue
-        risk=abs(entry-sl); rr=abs(tp-entry)/risk
+        risk=abs(entry-sl)
+        if risk < min_sl_frac*(s['pdh']-s['pdl']): continue
+        rr=abs(tp-entry)/risk
         # walk forward on M5
         res=None
         for j in range(i,len(bars)):
