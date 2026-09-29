@@ -58,3 +58,16 @@
 ## v1.04: flat before the weekend (Friday 17:00 server, configurable)
 - Python (May 2025 - Sep 2026): no effect on Wednesday only; Tue-Thu +40.1R -> +31.6R (Thursday
   trades cut short).
+- v1.04 Wednesday, ~Apr 2025 - Sep 2026 (100% quality): 43 trades, 39.5% win, PF 1.69, +19.8%,
+  DD 5.3% -> matches the Python model again (38 trades, PF 1.77, +19.2%).
+
+## v1.05: max SL distance filter (MaxSLFraction, default 0.30 x previous day range)
+- Feature study (2025 vs 2026 split): trades with SL between 0.15 and 0.25 x range have PF ~2.4-2.8
+  in both years; SL > 0.25 x range is flat or losing. Deep sweeps (> 0.5 x range) lose.
+- Trend filters (previous day direction, SMA20) and entry hour: no stable effect, not added.
+- Results (min 0.15, max SL x, Friday close 17h):
+  - Wednesday max 0.30: 23 trades, PF 2.38, +20.7R, DD 3.9% (but max 0.20 -> PF 0.88: fragile)
+  - Tue-Thu  max 0.30: 60 trades, PF 1.92, +37.8R, DD 9.4%, 2025 PF 1.62 / 2026 PF 2.22
+  - Tue-Thu  max 0.25: 53 trades, PF 2.12, +39.8R, DD 8.5%, 2025 PF 1.80 / 2026 PF 2.47
+- MT5 Z-score = runs test on win/loss sequence (dependence between trades), not profitability.
+  Near 0 = trades independent, which is what we want; do not optimise it.

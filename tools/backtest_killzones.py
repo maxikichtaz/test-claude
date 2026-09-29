@@ -16,6 +16,18 @@ for b in bars:
 dlist=list(days)
 prev={dlist[i]:days[dlist[i-1]] for i in range(1,len(dlist))}
 
+# daily open / close (server day) and trend context known before each day
+dopen={}; dclose={}
+for b in bars:
+    d=b[0].date(); dopen.setdefault(d,b[1]); dclose[d]=b[4]
+ctx={}
+for i in range(1,len(dlist)):
+    d=dlist[i]; p=dlist[i-1]
+    closes=[dclose[x] for x in dlist[max(0,i-20):i]]
+    ctx[d]=dict(prev_up=dclose[p]>dopen[p],
+                above_sma20=dclose[p]>sum(closes)/len(closes) if len(closes)>=20 else None,
+                prev_close=dclose[p])
+
 # M15 bars built from M5
 m15=collections.OrderedDict()
 for b in bars:
@@ -40,7 +52,8 @@ def in_kz(t,zones):
 
 bar_idx={b[0]:i for i,b in enumerate(bars)}
 
-def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_frac=0.0, weekdays=(2,), fri_close=None):
+def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_frac=0.0, weekdays=(2,), fri_close=None, max_sl_frac=None):
+    # max_sl_frac: maximum SL distance as a fraction of the previous day range (None = off)
     # fri_close: server hour on Friday at which open trades are closed (None = hold over weekend)
     # fresh_n: reclaim must come within N M15 bars of the last bar beyond the level (0 = same bar)
     # min_sl_frac: minimum SL distance as a fraction of the previous day range
@@ -76,6 +89,7 @@ def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_f
         if side=='S' and (sl<=entry or tp>=entry): s['done']=True; continue
         risk=abs(entry-sl)
         if risk < min_sl_frac*(s['pdh']-s['pdl']): continue
+        if max_sl_frac is not None and risk > max_sl_frac*(s['pdh']-s['pdl']): continue
         rr=abs(tp-entry)/risk
         # walk forward on M5
         res=None
@@ -92,7 +106,12 @@ def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_f
             if hit_tp: res=rr; exit_t=bt; break
         if res is None: break
         s['done']=True; open_until=exit_t
-        trades.append(dict(t=close_time,side=side,R=res,rr=rr,exit=exit_t,risk=risk))
+        rng=s['pdh']-s['pdl']
+        depth=(s['sh']-s['pdh'])/rng if side=='S' else (s['pdl']-s['sl'])/rng
+        c=ctx.get(d,{})
+        trades.append(dict(t=close_time,side=side,R=res,rr=rr,exit=exit_t,risk=risk,
+                           depth=depth,risk_frac=risk/rng,hour=t.hour,wd=t.weekday(),
+                           prev_up=c.get('prev_up'),above_sma20=c.get('above_sma20')))
     return trades
 
 def stats(name,tr):
@@ -103,10 +122,14 @@ def stats(name,tr):
         streak=streak+1 if x['R']<0 else 0; maxstreak=max(maxstreak,streak)
     w=[x for x in tr if x['R']>0]; gp=sum(x['R'] for x in w); gl=-sum(x['R'] for x in tr if x['R']<0)
     L=[x for x in tr if x['side']=='B']; S=[x for x in tr if x['side']=='S']
+    # MT5 Z-score (runs test on the win/loss sequence)
+    seq=[x['R']>0 for x in tr]; N=len(seq); W=sum(seq); Lo=N-W
+    runs=1+sum(1 for a,b in zip(seq,seq[1:]) if a!=b); P=2*W*Lo
+    z=(N*(runs-0.5)-P)/((P*(P-N)/(N-1))**0.5) if N>1 and P>N else 0.0
     wr=lambda a: f"{sum(1 for x in a if x['R']>0)}/{len(a)}"
     print(f"{name:12s} n={len(tr):3d} win={len(w)/len(tr)*100:5.1f}% PF={gp/gl if gl else 99:5.2f} "
           f"sumR={sum(x['R'] for x in tr):+6.1f} net={(bal/10000-1)*100:+6.1f}% maxDD={mdd*100:5.1f}% "
-          f"maxLossStreak={maxstreak} longs={wr(L)} shorts={wr(S)} avgRR={sum(x['rr'] for x in tr)/len(tr):.1f}")
+          f"maxLossStreak={maxstreak} longs={wr(L)} shorts={wr(S)} avgRR={sum(x['rr'] for x in tr)/len(tr):.1f} Z={z:+.2f}")
 
 if __name__=='__main__':
     for per,(a,b) in {'FULL 2025-05..2026-09':(None,None),

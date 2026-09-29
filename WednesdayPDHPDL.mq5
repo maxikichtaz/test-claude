@@ -6,11 +6,11 @@
 //|  - The level taken first during the day sets the direction       |
 //|  - SL = sweep extreme, risk = % of balance                       |
 //|  - Max 1 trade per day, entries only in the NY killzone          |
-//|  - Min SL distance filter (fraction of previous day range)       |
+//|  - Min / max SL distance filter (fraction of previous day range) |
 //|  - Flat before the weekend (Friday cutoff, server time)          |
 //+------------------------------------------------------------------+
 #property copyright "test-claude"
-#property version   "1.04"
+#property version   "1.05"
 
 #include <Trade\Trade.mqh>
 
@@ -20,6 +20,7 @@ input ENUM_TIMEFRAMES SignalTF    = PERIOD_M15;  // Signal candle timeframe
 input long            MagicNumber = 20260926;    // Magic number
 input int             Slippage    = 20;          // Max slippage (points)
 input double          MinSLFraction = 0.15;      // Min SL distance, fraction of previous day range (0 = off)
+input double          MaxSLFraction = 0.30;      // Max SL distance, fraction of previous day range (0 = off)
 
 //--- trading days (backtest NAS100: Tue-Thu more robust than Wednesday only)
 input bool            TradeMonday    = false;
@@ -155,6 +156,10 @@ void OpenTrade(bool isBuy, double entry, double sl, double tp)
 
    // Too tight stops are not realistic: require a minimum SL distance
    if(MathAbs(entry - sl) < MinSLFraction * (g_pdh - g_pdl))
+      return;
+
+   // Too deep sweeps (stop too far): skip, the reclaim is less reliable
+   if(MaxSLFraction > 0.0 && MathAbs(entry - sl) > MaxSLFraction * (g_pdh - g_pdl))
       return;
 
    // Broker minimum stop distance
