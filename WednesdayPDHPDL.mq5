@@ -8,7 +8,7 @@
 //|  - Max 1 trade per Wednesday                                     |
 //+------------------------------------------------------------------+
 #property copyright "test-claude"
-#property version   "1.01"
+#property version   "1.02"
 
 #include <Trade\Trade.mqh>
 
@@ -17,6 +17,15 @@ input double          RiskPercent = 1.0;         // Risk per trade (% of balance
 input ENUM_TIMEFRAMES SignalTF    = PERIOD_M15;  // Signal candle timeframe
 input long            MagicNumber = 20260926;    // Magic number
 input int             Slippage    = 20;          // Max slippage (points)
+
+//--- ICT killzones (broker SERVER time, hours). Default = broker GMT+2/+3 (NY + 7h)
+input bool            UseKillzones = true;       // Only enter inside killzones
+input bool            UseLondonKZ  = false;      // London KZ (02:00-05:00 New York)
+input int             LondonStart  = 9;          // London KZ start hour (server)
+input int             LondonEnd    = 12;         // London KZ end hour (server)
+input bool            UseNewYorkKZ = true;       // New York AM KZ (07:00-10:00 New York)
+input int             NewYorkStart = 14;         // New York KZ start hour (server)
+input int             NewYorkEnd   = 17;         // New York KZ end hour (server)
 
 //--- which level was swept first today
 enum ENUM_FIRST_SWEEP
@@ -61,6 +70,22 @@ double CalcLots(double slDistance)
       lots = maxLot;
 
    return(NormalizeDouble(lots, 2));
+}
+
+//+------------------------------------------------------------------+
+//| Is the signal candle (open time) inside an enabled killzone?     |
+//+------------------------------------------------------------------+
+bool InKillzone(datetime t)
+{
+   if(!UseKillzones)
+      return(true);
+   MqlDateTime k;
+   TimeToStruct(t, k);
+   if(UseLondonKZ && k.hour >= LondonStart && k.hour < LondonEnd)
+      return(true);
+   if(UseNewYorkKZ && k.hour >= NewYorkStart && k.hour < NewYorkEnd)
+      return(true);
+   return(false);
 }
 
 //+------------------------------------------------------------------+
@@ -190,6 +215,10 @@ void OnTick()
    }
 
    if(g_tradedToday || HasOpenPosition())
+      return;
+
+   // Entries only inside the killzones (sweeps are tracked all day)
+   if(!InKillzone(iTime(_Symbol, SignalTF, 1)))
       return;
 
    // 5. Reclaim signal on candle close
