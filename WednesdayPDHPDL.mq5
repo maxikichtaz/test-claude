@@ -1,156 +1,207 @@
 //+------------------------------------------------------------------+
 //|                                              WednesdayPDHPDL.mq5 |
-//|  Mercredi uniquement - Reclaim du PDH / PDL                      |
-//|  - Sweep du PDH puis clôture M15 sous le PDH -> SELL, TP = PDL   |
-//|  - Sweep du PDL puis clôture M15 au-dessus du PDL -> BUY, TP=PDH |
-//|  - Le niveau pris en premier dans la journée définit le sens     |
-//|  - SL = extrême du sweep, risque = % du solde                    |
-//|  - 1 trade maximum par mercredi                                  |
+//|  Wednesday only - PDH / PDL reclaim                              |
+//|  - Sweep of PDH then M15 close back below PDH -> SELL, TP = PDL  |
+//|  - Sweep of PDL then M15 close back above PDL -> BUY,  TP = PDH  |
+//|  - The level taken first during the day sets the direction       |
+//|  - SL = sweep extreme, risk = % of balance                       |
+//|  - Max 1 trade per Wednesday                                     |
 //+------------------------------------------------------------------+
 #property copyright "test-claude"
-#property version   "1.00"
+#property version   "1.01"
 
 #include <Trade\Trade.mqh>
 
-input double          RiskPercent = 1.0;         // Risque par trade (% du solde)
-input ENUM_TIMEFRAMES SignalTF    = PERIOD_M15;  // Timeframe de la bougie de signal
-input ulong           Magic       = 20260926;    // Magic number
-input int             Slippage    = 20;          // Slippage max (points)
+//--- inputs
+input double          RiskPercent = 1.0;         // Risk per trade (% of balance)
+input ENUM_TIMEFRAMES SignalTF    = PERIOD_M15;  // Signal candle timeframe
+input long            MagicNumber = 20260926;    // Magic number
+input int             Slippage    = 20;          // Max slippage (points)
 
-enum FirstLevel { NOT_TAKEN, HIGH_FIRST, LOW_FIRST };
-
-CTrade     trade;
-datetime   lastBarTime  = 0;
-datetime   currentDay   = 0;
-double     pdh = 0, pdl = 0;
-double     sweepHigh = 0, sweepLow = 0;
-FirstLevel firstTaken  = NOT_TAKEN;
-bool       tradedToday = false;
-
-//+------------------------------------------------------------------+
-int OnInit()
+//--- which level was swept first today
+enum ENUM_FIRST_SWEEP
 {
-   trade.SetExpertMagicNumber(Magic);
-   trade.SetDeviationInPoints(Slippage);
-   return(INIT_SUCCEEDED);
-}
+   SWEEP_NONE = 0,
+   SWEEP_HIGH = 1,
+   SWEEP_LOW  = 2
+};
+
+//--- globals
+CTrade           g_trade;
+datetime         g_lastBarTime = 0;
+datetime         g_currentDay  = 0;
+double           g_pdh         = 0.0;
+double           g_pdl         = 0.0;
+double           g_sweepHigh   = 0.0;
+double           g_sweepLow    = 0.0;
+ENUM_FIRST_SWEEP g_firstSweep  = SWEEP_NONE;
+bool             g_tradedToday = false;
 
 //+------------------------------------------------------------------+
-void OnTick()
-{
-   // 1. Traiter uniquement à l'ouverture d'une nouvelle bougie de signal
-   datetime barTime = iTime(_Symbol, SignalTF, 0);
-   if(barTime == 0 || barTime == lastBarTime) return;
-   lastBarTime = barTime;
-
-   // 2. Mercredi uniquement (heure serveur du broker)
-   MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
-   if(dt.day_of_week != 3) { currentDay = 0; return; }
-
-   // 3. Nouveau jour : récupérer PDH / PDL et réinitialiser l'état
-   datetime dayStart = iTime(_Symbol, PERIOD_D1, 0);
-   if(dayStart != currentDay)
-   {
-      currentDay  = dayStart;
-      pdh         = iHigh(_Symbol, PERIOD_D1, 1);
-      pdl         = iLow(_Symbol, PERIOD_D1, 1);
-      sweepHigh   = pdh;
-      sweepLow    = pdl;
-      firstTaken  = NOT_TAKEN;
-      tradedToday = false;
-   }
-   if(pdh <= 0 || pdl <= 0) return;
-
-   // La bougie clôturée doit appartenir à la journée en cours
-   if(iTime(_Symbol, SignalTF, 1) < currentDay) return;
-
-   double high  = iHigh(_Symbol, SignalTF, 1);
-   double low   = iLow(_Symbol, SignalTF, 1);
-   double close = iClose(_Symbol, SignalTF, 1);
-
-   // 4. Suivi des sweeps
-   if(high > pdh)
-   {
-      sweepHigh = MathMax(sweepHigh, high);
-      if(firstTaken == NOT_TAKEN) firstTaken = HIGH_FIRST;
-   }
-   if(low < pdl)
-   {
-      sweepLow = MathMin(sweepLow, low);
-      if(firstTaken == NOT_TAKEN) firstTaken = LOW_FIRST;
-   }
-
-   if(tradedToday || HasOpenPosition()) return;
-
-   // 5. Signal de reclaim à la clôture de la bougie
-   if(firstTaken == HIGH_FIRST && close < pdh)
-   {
-      double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      OpenTrade(ORDER_TYPE_SELL, entry, sweepHigh, pdl);
-   }
-   else if(firstTaken == LOW_FIRST && close > pdl)
-   {
-      double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      OpenTrade(ORDER_TYPE_BUY, entry, sweepLow, pdh);
-   }
-}
-
+//| Lot size so that the SL loses RiskPercent % of the balance       |
 //+------------------------------------------------------------------+
-void OpenTrade(ENUM_ORDER_TYPE type, double entry, double sl, double tp)
-{
-   bool isBuy = (type == ORDER_TYPE_BUY);
-
-   // SL / TP doivent être du bon côté du prix d'entrée
-   if(isBuy  && (sl >= entry || tp <= entry)) { tradedToday = true; return; }
-   if(!isBuy && (sl <= entry || tp >= entry)) { tradedToday = true; return; }
-
-   // Distance minimale imposée par le broker
-   double minDist = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
-   if(MathAbs(entry - sl) < minDist || MathAbs(tp - entry) < minDist) return;
-
-   double lots = CalcLots(MathAbs(entry - sl));
-   if(lots <= 0) return;
-
-   sl = NormalizeDouble(sl, _Digits);
-   tp = NormalizeDouble(tp, _Digits);
-
-   bool ok = isBuy ? trade.Buy(lots, _Symbol, 0, sl, tp, "PDL reclaim")
-                   : trade.Sell(lots, _Symbol, 0, sl, tp, "PDH reclaim");
-   if(ok) tradedToday = true;
-   else   Print("Erreur ordre: ", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
-}
-
-//+------------------------------------------------------------------+
-// Taille de position pour risquer RiskPercent % du solde
 double CalcLots(double slDistance)
 {
    double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double step      = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double lotStep   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double minLot    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-   if(tickSize <= 0 || tickValue <= 0 || step <= 0 || slDistance <= 0) return 0;
 
-   double riskMoney   = AccountInfoDouble(ACCOUNT_BALANCE) * RiskPercent / 100.0;
-   double lossPerLot  = slDistance / tickSize * tickValue;
-   double lots        = MathFloor(riskMoney / lossPerLot / step) * step;
+   if(tickSize <= 0.0 || tickValue <= 0.0 || lotStep <= 0.0 || slDistance <= 0.0)
+      return(0.0);
 
-   if(lots < minLot) return 0;   // risque trop faible pour le lot minimum
-   return MathMin(lots, maxLot);
+   double riskMoney  = AccountInfoDouble(ACCOUNT_BALANCE) * RiskPercent / 100.0;
+   double lossPerLot = (slDistance / tickSize) * tickValue;
+   double lots       = MathFloor((riskMoney / lossPerLot) / lotStep) * lotStep;
+
+   if(lots < minLot)
+      return(0.0);                 // risk too small for broker minimum lot
+   if(lots > maxLot)
+      lots = maxLot;
+
+   return(NormalizeDouble(lots, 2));
 }
 
+//+------------------------------------------------------------------+
+//| Is there already a position from this EA on this symbol?         |
 //+------------------------------------------------------------------+
 bool HasOpenPosition()
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket > 0 &&
-         PositionGetString(POSITION_SYMBOL) == _Symbol &&
-         PositionGetInteger(POSITION_MAGIC) == (long)Magic)
-         return true;
+      if(ticket == 0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+         PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         return(true);
    }
-   return false;
+   return(false);
+}
+
+//+------------------------------------------------------------------+
+//| Send a market order with SL / TP                                 |
+//+------------------------------------------------------------------+
+void OpenTrade(bool isBuy, double entry, double sl, double tp)
+{
+   // SL and TP must be on the correct side of the entry price
+   if(isBuy && (sl >= entry || tp <= entry))
+   {
+      g_tradedToday = true;
+      return;
+   }
+   if(!isBuy && (sl <= entry || tp >= entry))
+   {
+      g_tradedToday = true;
+      return;
+   }
+
+   // Broker minimum stop distance
+   double minDist = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+   if(MathAbs(entry - sl) < minDist || MathAbs(tp - entry) < minDist)
+      return;
+
+   double lots = CalcLots(MathAbs(entry - sl));
+   if(lots <= 0.0)
+      return;
+
+   sl = NormalizeDouble(sl, _Digits);
+   tp = NormalizeDouble(tp, _Digits);
+
+   bool ok = false;
+   if(isBuy)
+      ok = g_trade.Buy(lots, _Symbol, 0.0, sl, tp, "PDL reclaim");
+   else
+      ok = g_trade.Sell(lots, _Symbol, 0.0, sl, tp, "PDH reclaim");
+
+   if(ok)
+      g_tradedToday = true;
+   else
+      Print("Order error: ", g_trade.ResultRetcode(), " ", g_trade.ResultRetcodeDescription());
+}
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   g_trade.SetExpertMagicNumber((ulong)MagicNumber);
+   g_trade.SetDeviationInPoints((ulong)Slippage);
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // 1. Work only once per new signal candle
+   datetime barTime = iTime(_Symbol, SignalTF, 0);
+   if(barTime == 0 || barTime == g_lastBarTime)
+      return;
+   g_lastBarTime = barTime;
+
+   // 2. Wednesday only (broker server time)
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   if(dt.day_of_week != 3)
+   {
+      g_currentDay = 0;
+      return;
+   }
+
+   // 3. New day: read PDH / PDL and reset state
+   datetime dayStart = iTime(_Symbol, PERIOD_D1, 0);
+   if(dayStart != g_currentDay)
+   {
+      g_currentDay  = dayStart;
+      g_pdh         = iHigh(_Symbol, PERIOD_D1, 1);
+      g_pdl         = iLow(_Symbol, PERIOD_D1, 1);
+      g_sweepHigh   = g_pdh;
+      g_sweepLow    = g_pdl;
+      g_firstSweep  = SWEEP_NONE;
+      g_tradedToday = false;
+   }
+   if(g_pdh <= 0.0 || g_pdl <= 0.0)
+      return;
+
+   // The closed candle must belong to today
+   if(iTime(_Symbol, SignalTF, 1) < g_currentDay)
+      return;
+
+   double barHigh  = iHigh(_Symbol, SignalTF, 1);
+   double barLow   = iLow(_Symbol, SignalTF, 1);
+   double barClose = iClose(_Symbol, SignalTF, 1);
+
+   // 4. Track sweeps
+   if(barHigh > g_pdh)
+   {
+      g_sweepHigh = MathMax(g_sweepHigh, barHigh);
+      if(g_firstSweep == SWEEP_NONE)
+         g_firstSweep = SWEEP_HIGH;
+   }
+   if(barLow < g_pdl)
+   {
+      g_sweepLow = MathMin(g_sweepLow, barLow);
+      if(g_firstSweep == SWEEP_NONE)
+         g_firstSweep = SWEEP_LOW;
+   }
+
+   if(g_tradedToday || HasOpenPosition())
+      return;
+
+   // 5. Reclaim signal on candle close
+   if(g_firstSweep == SWEEP_HIGH && barClose < g_pdh)
+   {
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      OpenTrade(false, bid, g_sweepHigh, g_pdl);
+   }
+   else if(g_firstSweep == SWEEP_LOW && barClose > g_pdl)
+   {
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      OpenTrade(true, ask, g_sweepLow, g_pdh);
+   }
 }
 //+------------------------------------------------------------------+
