@@ -8,9 +8,10 @@
 //|  - Max 1 trade per day, entries only in the NY killzone          |
 //|  - Min / max SL distance filter (fraction of previous day range) |
 //|  - Flat before the weekend (Friday cutoff, server time)          |
+//|  - Optional breakeven stop once the trade reaches +X R           |
 //+------------------------------------------------------------------+
 #property copyright "test-claude"
-#property version   "1.05"
+#property version   "1.06"
 
 #include <Trade\Trade.mqh>
 
@@ -21,6 +22,8 @@ input long            MagicNumber = 20260926;    // Magic number
 input int             Slippage    = 20;          // Max slippage (points)
 input double          MinSLFraction = 0.15;      // Min SL distance, fraction of previous day range (0 = off)
 input double          MaxSLFraction = 0.30;      // Max SL distance, fraction of previous day range (0 = off)
+input double          BreakEvenAtR  = 0.0;       // Move SL to entry at +X R (0 = off, e.g. 1.0)
+input int             BreakEvenOffsetPoints = 0; // SL placed this many points beyond entry (covers costs)
 
 //--- trading days (backtest NAS100: Tue-Thu more robust than Wednesday only)
 input bool            TradeMonday    = false;
@@ -240,11 +243,61 @@ bool WeekendCloseCheck()
 }
 
 //+------------------------------------------------------------------+
+//| Move the stop to entry once price has moved BreakEvenAtR x risk  |
+//+------------------------------------------------------------------+
+void ManageBreakEven()
+{
+   if(BreakEvenAtR <= 0.0)
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol ||
+         PositionGetInteger(POSITION_MAGIC) != MagicNumber)
+         continue;
+
+      bool   isBuy = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+      double open  = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl    = PositionGetDouble(POSITION_SL);
+      double tp    = PositionGetDouble(POSITION_TP);
+      if(sl <= 0.0)
+         continue;
+
+      // Already at (or beyond) breakeven: nothing to do
+      if((isBuy && sl >= open) || (!isBuy && sl <= open))
+         continue;
+
+      double risk  = MathAbs(open - sl);
+      double price = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double gain  = isBuy ? price - open : open - price;
+      if(risk <= 0.0 || gain < BreakEvenAtR * risk)
+         continue;
+
+      double newSl = isBuy ? open + BreakEvenOffsetPoints * _Point : open - BreakEvenOffsetPoints * _Point;
+      newSl = NormalizeDouble(newSl, _Digits);
+
+      // Respect the broker minimum distance from the current price
+      double minDist = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+      if((isBuy && price - newSl < minDist) || (!isBuy && newSl - price < minDist))
+         continue;
+
+      if(!g_trade.PositionModify(ticket, newSl, tp))
+         Print("Breakeven error: ", g_trade.ResultRetcode(), " ", g_trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
 void OnTick()
 {
    // 0. No position over the weekend, and no new entry after the Friday cutoff
    if(WeekendCloseCheck())
       return;
+
+   // Breakeven management runs on every tick
+   ManageBreakEven();
 
    // 1. Work only once per new signal candle
    datetime barTime = iTime(_Symbol, SignalTF, 0);

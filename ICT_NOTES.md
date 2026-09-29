@@ -71,3 +71,9 @@
   - Tue-Thu  max 0.25: 53 trades, PF 2.12, +39.8R, DD 8.5%, 2025 PF 1.80 / 2026 PF 2.47
 - MT5 Z-score = runs test on win/loss sequence (dependence between trades), not profitability.
   Near 0 = trades independent, which is what we want; do not optimise it.
+- v1.05 Wednesday, ~Apr 2025 - Sep 2026 (100% quality): 26 trades, 38.5% win, PF 2.25, +22.4%,
+  DD 4.0% / 7.6% equity -> matches Python (23 trades, PF 2.38, +21.9%).
+
+## v1.06: optional breakeven (BreakEvenAtR, default 0 = off)
+- Python: Wednesday BE@1R PF 3.57 (+25.7R vs +20.7R); Tue-Thu BE@1R PF 2.14 but +30.4R vs +37.8R,
+  DD 9.4% -> 5.9%. Effect depends on the day set -> kept off by default, to compare in MT5.

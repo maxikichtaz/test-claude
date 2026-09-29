@@ -52,7 +52,8 @@ def in_kz(t,zones):
 
 bar_idx={b[0]:i for i,b in enumerate(bars)}
 
-def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_frac=0.0, weekdays=(2,), fri_close=None, max_sl_frac=None):
+def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_frac=0.0, weekdays=(2,), fri_close=None, max_sl_frac=None, be_r=None):
+    # be_r: move SL to entry once price has moved be_r x risk in favour (None = off)
     # max_sl_frac: maximum SL distance as a fraction of the previous day range (None = off)
     # fri_close: server hour on Friday at which open trades are closed (None = hold over weekend)
     # fresh_n: reclaim must come within N M15 bars of the last bar beyond the level (0 = same bar)
@@ -102,7 +103,10 @@ def run(zones, start=None, end=None, sweep_only_kz=False, fresh_n=None, min_sl_f
             if fri_close is not None and bt.weekday()==4 and bt.hour>=fri_close or bt.weekday()>4:
                 px=bo if side=='B' else bo+sp
                 res=(px-entry)/risk if side=='B' else (entry-px)/risk; exit_t=bt; break
-            if hit_sl: res=-1.0; exit_t=bt; break      # conservative: SL first if both
+            if hit_sl: res=(sl-entry)/risk if side=='B' else (entry-sl)/risk; exit_t=bt; break   # SL first if both
+            if be_r is not None and not hit_tp:
+                fav=(bh-entry) if side=='B' else (entry-(bl+sp))
+                if fav>=be_r*risk: sl=entry
             if hit_tp: res=rr; exit_t=bt; break
         if res is None: break
         s['done']=True; open_until=exit_t
